@@ -32,6 +32,7 @@ public class Jdbc4TestSuite extends TestSuite {
     suite.addTest(new JUnit4TestAdapter(WrapperTest.class));
     suite.addTest(new JUnit4TestAdapter(BinaryTest.class));
     suite.addTest(new JUnit4TestAdapter(IsValidTest.class));
+    suite.addTest(new JUnit4TestAdapter(NetworkTimeoutTest.class));
     suite.addTest(new JUnit4TestAdapter(ClientInfoTest.class));
     suite.addTest(new JUnit4TestAdapter(PGCopyInputStreamTest.class));
     suite.addTest(new JUnit4TestAdapter(BlobTest.class));
