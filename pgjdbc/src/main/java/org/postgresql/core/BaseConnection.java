@@ -202,4 +202,11 @@ public interface BaseConnection extends PGConnection, Connection {
    * @param flushCacheOnDeallocate true if statement cache should be reset when "deallocate/discard" message observed
    */
   void setFlushCacheOnDeallocate(boolean flushCacheOnDeallocate);
+
+  /**
+   * Close Statements tracked by the connection.
+   */
+  void closeStatements();
+
+  void untrackStatement(BaseStatement statement);
 }

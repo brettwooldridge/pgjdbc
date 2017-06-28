@@ -1873,7 +1873,9 @@ public class PgResultSet implements ResultSet, org.postgresql.PGRefCursorResultS
         cursor = null;
       }
     } finally {
-      ((PgStatement) statement).checkCompletion();
+      PgStatement pgStatement = ((PgStatement) statement);
+      pgStatement.untrackResultSet(this);
+      pgStatement.checkCompletion();
     }
   }
 

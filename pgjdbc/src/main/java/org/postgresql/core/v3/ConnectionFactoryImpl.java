@@ -7,6 +7,7 @@
 package org.postgresql.core.v3;
 
 import org.postgresql.PGProperty;
+import org.postgresql.core.BaseConnection;
 import org.postgresql.core.ConnectionFactory;
 import org.postgresql.core.PGStream;
 import org.postgresql.core.QueryExecutor;
@@ -81,8 +82,8 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
     }
   }
 
-  public QueryExecutor openConnectionImpl(HostSpec[] hostSpecs, String user, String database,
-      Properties info) throws SQLException {
+  public QueryExecutor openConnectionImpl(BaseConnection baseConnection, HostSpec[] hostSpecs, String user,
+                                          String database, Properties info) throws SQLException {
     // Extract interesting values from the info properties:
     // - the SSL setting
     boolean requireSSL;
@@ -145,7 +146,7 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
 
         // Construct and send an ssl startup packet if requested.
         if (trySSL) {
-          newStream = enableSSL(newStream, requireSSL, info, connectTimeout);
+          newStream = enableSSL(baseConnection, newStream, requireSSL, info, connectTimeout);
         }
 
         // Set the socket timeout if the "socketTimeout" property has been set.
@@ -224,7 +225,7 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
         int cancelSignalTimeout = PGProperty.CANCEL_SIGNAL_TIMEOUT.getInt(info) * 1000;
 
         // Do final startup.
-        QueryExecutor queryExecutor = new QueryExecutorImpl(newStream, user, database,
+        QueryExecutor queryExecutor = new QueryExecutorImpl(baseConnection, newStream, user, database,
             cancelSignalTimeout, info);
 
         // Check Master or Slave
@@ -315,7 +316,8 @@ public class ConnectionFactoryImpl extends ConnectionFactory {
     return start + tz.substring(4);
   }
 
-  private PGStream enableSSL(PGStream pgStream, boolean requireSSL, Properties info, int connectTimeout)
+  private PGStream enableSSL(BaseConnection baseConnection, PGStream pgStream, boolean requireSSL, Properties info,
+                             int connectTimeout)
       throws IOException, SQLException {
     LOGGER.log(Level.FINEST, " FE=> SSLRequest");
 

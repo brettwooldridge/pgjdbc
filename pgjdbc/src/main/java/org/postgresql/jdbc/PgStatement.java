@@ -25,9 +25,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLWarning;
 import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.TimerTask;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
@@ -49,6 +47,7 @@ public class PgStatement implements Statement, BaseStatement {
   private final int rsHoldability;
   private boolean poolable;
   private boolean closeOnCompletion = false;
+  private final Set<PgResultSet> openResults;
   protected int fetchdirection = ResultSet.FETCH_FORWARD;
   // fetch direction hint (currently ignored)
 
@@ -149,6 +148,7 @@ public class PgStatement implements Statement, BaseStatement {
     setFetchSize(c.getDefaultFetchSize());
     setPrepareThreshold(c.getPrepareThreshold());
     this.rsHoldability = rsHoldability;
+    this.openResults = Collections.synchronizedSet(new HashSet<>());
   }
 
   public ResultSet createResultSet(Query originalQuery, Field[] fields, List<byte[][]> tuples,
@@ -158,6 +158,7 @@ public class PgStatement implements Statement, BaseStatement {
         getResultSetHoldability());
     newResult.setFetchSize(getFetchSize());
     newResult.setFetchDirection(getFetchDirection());
+    openResults.add(newResult);
     return newResult;
   }
 
@@ -317,6 +318,9 @@ public class PgStatement implements Statement, BaseStatement {
       ResultSet rs = firstUnclosedResult.getResultSet();
       if (rs != null) {
         rs.close();
+        if (firstUnclosedResult == null) {
+          break;
+        }
       }
       firstUnclosedResult = firstUnclosedResult.getNext();
     }
@@ -597,6 +601,8 @@ public class PgStatement implements Statement, BaseStatement {
     if (isClosed) {
       return;
     }
+
+    connection.untrackStatement(this);
 
     cleanupTimer();
 
@@ -1137,4 +1143,7 @@ public class PgStatement implements Statement, BaseStatement {
   protected void transformQueriesAndParameters() throws SQLException {
   }
 
+  protected void untrackResultSet(PgResultSet resultSet) {
+    openResults.remove(resultSet);
+  }
 }

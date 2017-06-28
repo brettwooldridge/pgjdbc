@@ -27,6 +27,7 @@ public abstract class QueryExecutorBase implements QueryExecutor {
 
   private static final Logger LOGGER = Logger.getLogger(QueryExecutorBase.class.getName());
   protected final PGStream pgStream;
+  protected final BaseConnection baseConnection;
   private final String user;
   private final String database;
   private final int cancelSignalTimeout;
@@ -52,8 +53,9 @@ public abstract class QueryExecutorBase implements QueryExecutor {
   private final LruCache<Object, CachedQuery> statementCache;
   private final CachedQueryCreateAction cachedQueryCreateAction;
 
-  protected QueryExecutorBase(PGStream pgStream, String user,
+  protected QueryExecutorBase(BaseConnection baseConnection, PGStream pgStream, String user,
       String database, int cancelSignalTimeout, Properties info) throws SQLException {
+    this.baseConnection = baseConnection;
     this.pgStream = pgStream;
     this.user = user;
     this.database = database;
@@ -117,6 +119,7 @@ public abstract class QueryExecutorBase implements QueryExecutor {
   @Override
   public void abort() {
     try {
+      baseConnection.closeStatements();
       pgStream.getSocket().close();
     } catch (IOException e) {
       // ignore
@@ -132,6 +135,7 @@ public abstract class QueryExecutorBase implements QueryExecutor {
 
     try {
       LOGGER.log(Level.FINEST, " FE=> Terminate");
+      baseConnection.closeStatements();
       sendCloseMessage();
       pgStream.flush();
       pgStream.close();

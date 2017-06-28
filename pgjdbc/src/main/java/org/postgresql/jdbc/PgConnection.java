@@ -58,18 +58,7 @@ import java.sql.Savepoint;
 import java.sql.Statement;
 import java.sql.Struct;
 import java.sql.Types;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Locale;
-import java.util.Map;
-import java.util.NoSuchElementException;
-import java.util.Properties;
-import java.util.Set;
-import java.util.StringTokenizer;
-import java.util.TimeZone;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.*;
 import java.util.concurrent.Executor;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -141,6 +130,8 @@ public class PgConnection implements BaseConnection {
 
   private final LruCache<FieldMetadata.Key, FieldMetadata> fieldMetadataCache;
 
+  private final Set<Statement> openStatements;
+
   final CachedQuery borrowQuery(String sql) throws SQLException {
     return queryExecutor.borrowQuery(sql);
   }
@@ -180,6 +171,8 @@ public class PgConnection implements BaseConnection {
                       String url) throws SQLException {
     // Print out the driver version number
     LOGGER.log(Level.FINE, org.postgresql.util.DriverInfo.DRIVER_FULL_NAME);
+    
+    this.openStatements = Collections.synchronizedSet(new HashSet<>());
 
     this.creatingURL = url;
 
@@ -191,7 +184,7 @@ public class PgConnection implements BaseConnection {
     }
 
     // Now make the initial connection and set up local state
-    this.queryExecutor = ConnectionFactory.openConnection(hostSpecs, user, database, info);
+    this.queryExecutor = ConnectionFactory.openConnection(this, hostSpecs, user, database, info);
 
     // WARNING for unsupported servers (8.1 and lower are not supported)
     if (LOGGER.isLoggable(Level.WARNING) && !haveMinimumServerVersion(ServerVersion.v8_2)) {
@@ -413,6 +406,8 @@ public class PgConnection implements BaseConnection {
   public ResultSet execSQLQuery(String s, int resultSetType, int resultSetConcurrency)
       throws SQLException {
     BaseStatement stat = (BaseStatement) createStatement(resultSetType, resultSetConcurrency);
+    stat.closeOnCompletion();
+    openStatements.add(stat);
     boolean hasResultSet = stat.executeWithFlags(s, QueryExecutor.QUERY_SUPPRESS_BEGIN);
 
     while (!hasResultSet && stat.getUpdateCount() != -1) {
@@ -434,21 +429,27 @@ public class PgConnection implements BaseConnection {
   }
 
   public void execSQLUpdate(String s) throws SQLException {
-    BaseStatement stmt = (BaseStatement) createStatement();
-    if (stmt.executeWithFlags(s, QueryExecutor.QUERY_NO_METADATA | QueryExecutor.QUERY_NO_RESULTS
-        | QueryExecutor.QUERY_SUPPRESS_BEGIN)) {
-      throw new PSQLException(GT.tr("A result was returned when none was expected."),
-          PSQLState.TOO_MANY_RESULTS);
-    }
+    BaseStatement stmt = null;
+    try {
+      stmt = (BaseStatement) createStatement();
+      if (stmt.executeWithFlags(s, QueryExecutor.QUERY_NO_METADATA | QueryExecutor.QUERY_NO_RESULTS
+              | QueryExecutor.QUERY_SUPPRESS_BEGIN)) {
+        throw new PSQLException(GT.tr("A result was returned when none was expected."),
+                PSQLState.TOO_MANY_RESULTS);
+      }
 
-    // Transfer warnings to the connection, since the user never
-    // has a chance to see the statement itself.
-    SQLWarning warnings = stmt.getWarnings();
-    if (warnings != null) {
-      addWarning(warnings);
+      // Transfer warnings to the connection, since the user never
+      // has a chance to see the statement itself.
+      SQLWarning warnings = stmt.getWarnings();
+      if (warnings != null) {
+        addWarning(warnings);
+      }
     }
-
-    stmt.close();
+    finally {
+      if (stmt != null) {
+        stmt.close();
+      }
+    }
   }
 
   /**
@@ -648,13 +649,14 @@ public class PgConnection implements BaseConnection {
   }
 
   /**
-   * <B>Note:</B> even though {@code Statement} is automatically closed when it is garbage
+   * <B>Note:</B> even though {@code Connection} is automatically closed when it is garbage
    * collected, it is better to close it explicitly to lower resource consumption.
    *
    * {@inheritDoc}
    */
   public void close() throws SQLException {
     releaseTimer();
+    closeStatements();
     queryExecutor.close();
     openStackTrace = null;
   }
@@ -1190,23 +1192,29 @@ public class PgConnection implements BaseConnection {
   public Statement createStatement(int resultSetType, int resultSetConcurrency,
       int resultSetHoldability) throws SQLException {
     checkClosed();
-    return new PgStatement(this, resultSetType, resultSetConcurrency, resultSetHoldability);
+    Statement stmt = new PgStatement(this, resultSetType, resultSetConcurrency, resultSetHoldability);
+    openStatements.add(stmt);
+    return stmt;
   }
 
   @Override
   public PreparedStatement prepareStatement(String sql, int resultSetType, int resultSetConcurrency,
       int resultSetHoldability) throws SQLException {
     checkClosed();
-    return new PgPreparedStatement(this, sql, resultSetType, resultSetConcurrency,
-        resultSetHoldability);
+    PgPreparedStatement ps = new PgPreparedStatement(this, sql, resultSetType, resultSetConcurrency,
+            resultSetHoldability);
+    openStatements.add(ps);
+    return ps;
   }
 
   @Override
   public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency,
       int resultSetHoldability) throws SQLException {
     checkClosed();
-    return new PgCallableStatement(this, sql, resultSetType, resultSetConcurrency,
-        resultSetHoldability);
+    PgCallableStatement cs = new PgCallableStatement(this, sql, resultSetType, resultSetConcurrency,
+            resultSetHoldability);
+    openStatements.add(cs);
+    return cs;
   }
 
   @Override
@@ -1300,9 +1308,16 @@ public class PgConnection implements BaseConnection {
     }
     try {
       if (replicationConnection) {
-        Statement statement = createStatement();
-        statement.execute("IDENTIFY_SYSTEM");
-        statement.close();
+        Statement statement = null;
+        try {
+          statement = createStatement();
+          statement.execute("IDENTIFY_SYSTEM");
+        }
+        finally {
+          if (statement != null) {
+            statement.close();
+          }
+        }
       } else {
         if (checkConnectionQuery == null) {
           checkConnectionQuery = prepareStatement("");
@@ -1480,6 +1495,31 @@ public class PgConnection implements BaseConnection {
     }
   }
 
+  @Override
+  public void untrackStatement(BaseStatement statement) {
+    openStatements.remove(statement);
+  }
+
+  @Override
+  public void closeStatements() {
+    if (queryExecutor.isClosed() || openStatements.size() == 0) {
+      return;
+    }
+
+    Set<Statement> statements = new HashSet<>(openStatements);
+    Iterator<Statement> iterator = statements.iterator();
+    while (iterator.hasNext()) {
+      try {
+        Statement statement = iterator.next();
+        statement.close();
+      }
+      catch (SQLException sql) {
+        // keep going
+      }
+    }
+    openStatements.clear();
+  }
+
   public void setNetworkTimeout(Executor executor /*not used*/, int milliseconds) throws SQLException {
     checkClosed();
 
@@ -1546,9 +1586,16 @@ public class PgConnection implements BaseConnection {
 
     // Note we can't use execSQLUpdate because we don't want
     // to suppress BEGIN.
-    Statement stmt = createStatement();
-    stmt.executeUpdate("SAVEPOINT " + pgName);
-    stmt.close();
+    Statement stmt = null;
+    try {
+      stmt = createStatement();
+      stmt.executeUpdate("SAVEPOINT " + pgName);
+    }
+    finally {
+      if (stmt != null) {
+        stmt.close();
+      }
+    }
 
     return savepoint;
   }
@@ -1566,9 +1613,16 @@ public class PgConnection implements BaseConnection {
 
     // Note we can't use execSQLUpdate because we don't want
     // to suppress BEGIN.
-    Statement stmt = createStatement();
-    stmt.executeUpdate("SAVEPOINT " + savepoint.getPGName());
-    stmt.close();
+    Statement stmt = null;
+    try {
+      stmt = createStatement();
+      stmt.executeUpdate("SAVEPOINT " + savepoint.getPGName());
+    }
+    finally {
+      if (stmt != null) {
+        stmt.close();
+      }
+    }
 
     return savepoint;
   }
@@ -1637,6 +1691,7 @@ public class PgConnection implements BaseConnection {
             ResultSet.TYPE_FORWARD_ONLY,
             ResultSet.CONCUR_READ_ONLY,
             getHoldability());
+    openStatements.add(ps);
     Query query = cachedQuery.query;
     SqlCommand sqlCommand = query.getSqlCommand();
     if (sqlCommand != null) {

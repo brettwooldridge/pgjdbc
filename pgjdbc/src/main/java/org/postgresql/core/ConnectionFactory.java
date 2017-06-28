@@ -31,6 +31,8 @@ public abstract class ConnectionFactory {
    * <p>
    * Currently, protocol versions 3 (7.4+) is supported.
    *
+   *
+   * @param baseConnection the owning BaseConnection
    * @param hostSpecs at least one host and port to connect to; multiple elements for round-robin
    *        failover
    * @param user the username to authenticate with; may not be null.
@@ -40,14 +42,14 @@ public abstract class ConnectionFactory {
    * @return the new, initialized, connection
    * @throws SQLException if the connection could not be established.
    */
-  public static QueryExecutor openConnection(HostSpec[] hostSpecs, String user,
-      String database, Properties info) throws SQLException {
+  public static QueryExecutor openConnection(BaseConnection baseConnection, HostSpec[] hostSpecs, String user,
+                                             String database, Properties info) throws SQLException {
     String protoName = PGProperty.PROTOCOL_VERSION.get(info);
 
     if (protoName == null || protoName.isEmpty() || "3".equals(protoName)) {
       ConnectionFactory connectionFactory = new ConnectionFactoryImpl();
       QueryExecutor queryExecutor = connectionFactory.openConnectionImpl(
-          hostSpecs, user, database, info);
+              baseConnection, hostSpecs, user, database, info);
       if (queryExecutor != null) {
         return queryExecutor;
       }
@@ -62,6 +64,8 @@ public abstract class ConnectionFactory {
    * Implementation of {@link #openConnection} for a particular protocol version. Implemented by
    * subclasses of {@link ConnectionFactory}.
    *
+   *
+   * @param baseConnection the owning BaseConnection
    * @param hostSpecs at least one host and port to connect to; multiple elements for round-robin
    *        failover
    * @param user the username to authenticate with; may not be null.
@@ -73,8 +77,8 @@ public abstract class ConnectionFactory {
    * @throws SQLException if the connection could not be established for a reason other than
    *         protocol version incompatibility.
    */
-  public abstract QueryExecutor openConnectionImpl(HostSpec[] hostSpecs, String user,
-      String database, Properties info) throws SQLException;
+  public abstract QueryExecutor openConnectionImpl(BaseConnection baseConnection, HostSpec[] hostSpecs, String user,
+                                                   String database, Properties info) throws SQLException;
 
   /**
    * Safely close the given stream.

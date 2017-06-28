@@ -10,27 +10,7 @@ import org.postgresql.PGProperty;
 import org.postgresql.copy.CopyIn;
 import org.postgresql.copy.CopyOperation;
 import org.postgresql.copy.CopyOut;
-import org.postgresql.core.Encoding;
-import org.postgresql.core.EncodingPredictor;
-import org.postgresql.core.Field;
-import org.postgresql.core.NativeQuery;
-import org.postgresql.core.Oid;
-import org.postgresql.core.PGBindException;
-import org.postgresql.core.PGStream;
-import org.postgresql.core.ParameterList;
-import org.postgresql.core.Parser;
-import org.postgresql.core.Query;
-import org.postgresql.core.QueryExecutor;
-import org.postgresql.core.QueryExecutorBase;
-import org.postgresql.core.ReplicationProtocol;
-import org.postgresql.core.ResultCursor;
-import org.postgresql.core.ResultHandler;
-import org.postgresql.core.ResultHandlerBase;
-import org.postgresql.core.ResultHandlerDelegate;
-import org.postgresql.core.SqlCommand;
-import org.postgresql.core.SqlCommandType;
-import org.postgresql.core.TransactionState;
-import org.postgresql.core.Utils;
+import org.postgresql.core.*;
 import org.postgresql.core.v3.replication.V3ReplicationProtocol;
 import org.postgresql.jdbc.AutoSave;
 import org.postgresql.jdbc.BatchResultHandler;
@@ -116,9 +96,9 @@ public class QueryExecutorImpl extends QueryExecutorBase {
 
   private final ReplicationProtocol replicationProtocol;
 
-  public QueryExecutorImpl(PGStream pgStream, String user, String database,
-      int cancelSignalTimeout, Properties info) throws SQLException, IOException {
-    super(pgStream, user, database, cancelSignalTimeout, info);
+  public QueryExecutorImpl(BaseConnection baseConnection, PGStream pgStream, String user, String database,
+                           int cancelSignalTimeout, Properties info) throws SQLException, IOException {
+    super(baseConnection, pgStream, user, database, cancelSignalTimeout, info);
 
     this.allowEncodingChanges = PGProperty.ALLOW_ENCODING_CHANGES.getBoolean(info);
     this.replicationProtocol = new V3ReplicationProtocol(this, pgStream);
